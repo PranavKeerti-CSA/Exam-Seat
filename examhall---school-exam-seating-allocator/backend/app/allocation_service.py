@@ -168,8 +168,8 @@ class AllocationEngine:
                     if grid[r][c] is not None:
                         continue
 
-                    # Alternate between pool_a and pool_b based on checkerboard parity
-                    if (r + c) % 2 == 0:
+                    # Alternate between pool_a and pool_b based on column parity
+                    if c % 2 == 0:
                         chosen = pool_a.pop(0) if pool_a else (pool_b.pop(0) if pool_b else None)
                     else:
                         chosen = pool_b.pop(0) if pool_b else (pool_a.pop(0) if pool_a else None)

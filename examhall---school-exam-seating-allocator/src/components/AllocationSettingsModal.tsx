@@ -21,32 +21,11 @@ export const AllocationSettingsModal: React.FC<AllocationSettingsModalProps> = (
 
   const strategies: { id: SplitStrategy; title: string; desc: string; icon: React.ReactNode; badge: string }[] = [
     {
-      id: 'checkerboard_mix',
-      title: 'Checkerboard (A-B-A-B)',
-      desc: 'Strictly alternates desks between Grade A and Grade B to completely eliminate neighboring students having the same exam paper.',
-      icon: <Grid className="w-5 h-5 text-[#2563EB]" />,
-      badge: 'Recommended Anti-Cheating'
-    },
-    {
-      id: 'split_50_50',
-      title: '50/50 Dual-Class Split',
-      desc: 'Takes 15 students from Class A and 15 students from Class B for a 30-capacity room, with interleaved or split placement.',
-      icon: <Shuffle className="w-5 h-5 text-[#2563EB]" />,
-      badge: 'Exact 15/15 Rule'
-    },
-    {
       id: 'column_alternate',
       title: 'Column-wise Alternating',
       desc: 'Assigns entire columns to alternating classes (e.g. Column 1: Grade 10, Column 2: Grade 12, Column 3: Grade 10...).',
       icon: <Columns className="w-5 h-5 text-[#2563EB]" />,
       badge: 'Easy Invigilation'
-    },
-    {
-      id: 'subject_interleave',
-      title: 'Multi-Subject Round Robin',
-      desc: 'Mixes 3 or more exam subjects across rooms evenly for complex multi-level exams.',
-      icon: <Sparkles className="w-5 h-5 text-[#2563EB]" />,
-      badge: 'Multi-Grade'
     }
   ];
 

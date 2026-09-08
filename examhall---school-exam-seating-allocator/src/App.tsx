@@ -139,12 +139,12 @@ export default function App() {
             api.getSubjects(),
             api.getSessions()
           ]);
-          if (bRooms && bRooms.length > 0) setRooms(bRooms);
-          if (bStudents && bStudents.length > 0) setStudents(bStudents);
-          if (bSubjects && bSubjects.length > 0) setSubjects(bSubjects);
-          if (bSessions && bSessions.length > 0) {
+          if (bRooms) setRooms(bRooms);
+          if (bStudents) setStudents(bStudents);
+          if (bSubjects) setSubjects(bSubjects);
+          if (bSessions) {
             setSessions(bSessions);
-            if (!selectedSessionId || !bSessions.some(s => s.id === selectedSessionId)) {
+            if (bSessions.length > 0 && (!selectedSessionId || !bSessions.some(s => s.id === selectedSessionId))) {
               setSelectedSessionId(bSessions[0].id);
             }
           }
@@ -166,12 +166,12 @@ export default function App() {
         api.getSubjects(),
         api.getSessions()
       ]);
-      if (bRooms && bRooms.length > 0) setRooms(bRooms);
-      if (bStudents && bStudents.length > 0) setStudents(bStudents);
-      if (bSubjects && bSubjects.length > 0) setSubjects(bSubjects);
-      if (bSessions && bSessions.length > 0) {
+      if (bRooms) setRooms(bRooms);
+      if (bStudents) setStudents(bStudents);
+      if (bSubjects) setSubjects(bSubjects);
+      if (bSessions) {
         setSessions(bSessions);
-        setSelectedSessionId(bSessions[0].id);
+        if (bSessions.length > 0) setSelectedSessionId(bSessions[0].id);
       }
       setSyncStatusBanner({
         type: 'success',

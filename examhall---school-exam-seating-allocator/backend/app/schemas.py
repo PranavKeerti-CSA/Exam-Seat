@@ -134,7 +134,7 @@ class MonitoringDashboardStats(BaseModel):
 
 # --- ALLOCATION SCHEMAS ---
 class AllocationOptions(BaseModel):
-    strategy: str = "split_50_50"  # checkerboard_mix | split_50_50 | column_alternate | subject_interleave
+    strategy: str = "column_alternate"  # column_alternate
     leftoverHandling: str = "distribute_evenly"
     avoidAdjacentSameSubject: bool = True
     benchPartnerDifferentGroup: bool = True

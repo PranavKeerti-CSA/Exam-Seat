@@ -185,8 +185,8 @@ class ExcelService:
         existing_files = [f for f in primary_dir.iterdir() if f.suffix.lower() in [".xlsx", ".xls", ".csv"] and not f.name.startswith("~$")]
 
         # Generate sample template only if no user files exist
-        if not existing_files:
-            ExcelService.generate_sample_master_excel(primary_dir / "exam_master_template.xlsx")
+        # if not existing_files:
+        #     ExcelService.generate_sample_master_excel(primary_dir / "exam_master_template.xlsx")
 
         total_imported = {
             "students": 0,
@@ -270,9 +270,9 @@ class ExcelService:
                     counts["students"] += ExcelService._parse_students_df(df, db, sheet_name)
 
             # 4. Fallback: ensure all student sections have corresponding active classrooms
-            counts["rooms"] += ExcelService._ensure_section_classrooms(db)
-            # Ensure default exam sessions exist (Disabled by user request, they will auto-generate from UI)
-            # counts["sessions"] += ExcelService._ensure_default_sessions(db)
+            # counts["rooms"] += ExcelService._ensure_section_classrooms(db)
+            # Ensure default exam sessions exist
+            counts["sessions"] += ExcelService._ensure_default_sessions(db)
 
         db.commit()
         return counts
@@ -394,37 +394,34 @@ class ExcelService:
 
     @staticmethod
     def _ensure_default_sessions(db: Session) -> int:
-        """Ensures default exam sessions exist for the school curriculum."""
+        """Ensures default exam sessions exist for the school curriculum, only if none exist."""
+        if db.query(models.ExamSession).count() > 0:
+            return 0
+
         all_subs = db.query(models.Subject).all()
         sub_by_code = {s.code.upper(): s for s in all_subs}
 
         default_sessions_data = [
-            ("Term Exam - Physics & Business Studies", "09:00 AM - 12:00 PM", ["PHY", "BS"]),
-            ("Term Exam - Chemistry & Accountancy", "01:30 PM - 04:30 PM", ["CHE", "ACC"]),
-            ("Term Exam - Mathematics & Economics", "09:00 AM - 12:00 PM", ["MATH", "ECO", "A.M"]),
             ("Term Exam - English Language Core", "09:00 AM - 12:00 PM", ["ENG"]),
-            ("Term Exam - Biology & Computer Science", "01:30 PM - 04:30 PM", ["BIO", "CS"]),
-            ("All Sections - Common Examination", "09:00 AM - 12:00 PM", [])
+            ("Term Exam - Math & Additional Subjects", "09:00 AM - 12:00 PM", ["MATH", "A.M", "CS", "PSY", "ENTRE"]),
+            ("Term Exam - Biology & Additional Subjects", "01:30 PM - 04:30 PM", ["BIO", "CS", "PSY", "ENTRE"]),
+            ("Term Exam - Physics & Economics", "09:00 AM - 12:00 PM", ["PHY", "ECO"]),
+            ("Term Exam - Chemistry & Business Subjects", "01:30 PM - 04:30 PM", ["CHE", "BS", "BA", "ACC"])
         ]
         count = 0
         today_str = datetime.date.today().isoformat()
         for name, time_slot, sub_codes in default_sessions_data:
             sess_id = f"sess-{name.lower().replace(' ', '-').replace('&', 'and')}"
-            existing = db.query(models.ExamSession).filter(models.ExamSession.id == sess_id).first()
             matched_subs = [sub_by_code[c] for c in sub_codes if c in sub_by_code]
-            if not existing:
-                new_sess = models.ExamSession(
-                    id=sess_id,
-                    name=name,
-                    date=today_str,
-                    time_slot=time_slot,
-                    subjects=matched_subs
-                )
-                db.add(new_sess)
-                count += 1
-            else:
-                if matched_subs and not existing.subjects:
-                    existing.subjects = matched_subs
+            new_sess = models.ExamSession(
+                id=sess_id,
+                name=name,
+                date=today_str,
+                time_slot=time_slot,
+                subjects=matched_subs
+            )
+            db.add(new_sess)
+            count += 1
         db.flush()
         return count
 
@@ -859,66 +856,27 @@ class ExcelService:
 
         # 1. Section XI - A (Science: Math / Bio / CS)
         students_xia = [
-            {"S.No.": 1, "EXAM NO": 11101, "Name": "AADHITYA A", "Group": "I D", "SUB 1": "Eng", "SUB 2": "PSY", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "Bio", "SUB 6": "BA"},
-            {"S.No.": 2, "EXAM NO": 11102, "Name": "ADHITHYAA R S", "Group": "II A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 3, "EXAM NO": 11103, "Name": "ANUSHKA BADRI", "Group": "I D", "SUB 1": "Eng", "SUB 2": "PSY", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "Bio", "SUB 6": "BA"},
-            {"S.No.": 4, "EXAM NO": 11104, "Name": "ARYAN R KUMAR", "Group": "II A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 5, "EXAM NO": 11105, "Name": "ATHVIKA S", "Group": "II A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 6, "EXAM NO": 11106, "Name": "BHAVANA R", "Group": "I A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "Bio", "SUB 6": "BA"},
-            {"S.No.": 7, "EXAM NO": 11107, "Name": "DHIYA SHREE P", "Group": "I A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "Bio", "SUB 6": "BA"},
-            {"S.No.": 8, "EXAM NO": 11108, "Name": "HARSHINI V", "Group": "II A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 9, "EXAM NO": 11109, "Name": "KAVIN B", "Group": "II A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 10, "EXAM NO": 11110, "Name": "LAKSHAN S", "Group": "I A", "SUB 1": "Eng", "SUB 2": "Math", "SUB 3": "Phy", "SUB 4": "Che", "SUB 5": "Bio", "SUB 6": "BA"},
+            {"S.No.": "", "EXAM NO": "", "Name": "", "Group": "", "SUB 1": "", "SUB 2": "", "SUB 3": "", "SUB 4": "", "SUB 5": "", "SUB 6": ""}
         ]
 
         # 2. Section XI - B (Science / Tech / Entrepreneurship)
         students_xib = [
-            {"S.No.": 1, "EXAM NO": 11201, "Name": "AADHYA A", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 2, "EXAM NO": 11202, "Name": "AATHEESH P", "Group": "II C", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "Entre", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 3, "EXAM NO": 11203, "Name": "ABISHEK M", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 4, "EXAM NO": 11204, "Name": "ADVIKA M", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 5, "EXAM NO": 11205, "Name": "AKILESHWAR M", "Group": "II C", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "Entre", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 6, "EXAM NO": 11206, "Name": "ARAVIND K", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 7, "EXAM NO": 11207, "Name": "DEVA NANDHAN S", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 8, "EXAM NO": 11208, "Name": "DHIKSHITHA V", "Group": "II C", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "Entre", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 9, "EXAM NO": 11209, "Name": "GOKUL R", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
-            {"S.No.": 10, "EXAM NO": 11210, "Name": "HARISH S", "Group": "II B", "SUB 1": "Eng", "SUB 2": "Phy", "SUB 3": "Che", "SUB 4": "CS", "SUB 5": "Math", "SUB 6": "BA"},
+            {"S.No.": "", "EXAM NO": "", "Name": "", "Group": "", "SUB 1": "", "SUB 2": "", "SUB 3": "", "SUB 4": "", "SUB 5": "", "SUB 6": ""}
         ]
 
         # 3. Section XI - G (Commerce Stream: Business Studies / Economics / Accountancy)
         students_xig = [
-            {"S.No.": 1, "EXAM NO": 11701, "Name": "AISHWARYA G", "Group": "III A", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "DS", "SUB 6": "A.M"},
-            {"S.No.": 2, "EXAM NO": 11702, "Name": "AKSHAYA S", "Group": "III A", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "DS", "SUB 6": "A.M"},
-            {"S.No.": 3, "EXAM NO": 11703, "Name": "ATHIRAA ANAND", "Group": "III A", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "DS", "SUB 6": "A.M"},
-            {"S.No.": 4, "EXAM NO": 11704, "Name": "D R SHRRI VERSHUN", "Group": "III A", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "DS", "SUB 6": "A.M"},
-            {"S.No.": 5, "EXAM NO": 11705, "Name": "DEEPAK KUMAR S", "Group": "III B", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 6, "EXAM NO": 11706, "Name": "DIVYESH M", "Group": "III B", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 7, "EXAM NO": 11707, "Name": "HARINI S", "Group": "III A", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "DS", "SUB 6": "A.M"},
-            {"S.No.": 8, "EXAM NO": 11708, "Name": "JANANI R", "Group": "III B", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "CS", "SUB 6": "BA"},
-            {"S.No.": 9, "EXAM NO": 11709, "Name": "KAVYA N", "Group": "III A", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "DS", "SUB 6": "A.M"},
-            {"S.No.": 10, "EXAM NO": 11710, "Name": "MANOJ V", "Group": "III B", "SUB 1": "Eng", "SUB 2": "Acc", "SUB 3": "BS", "SUB 4": "Eco", "SUB 5": "CS", "SUB 6": "BA"},
+            {"S.No.": "", "EXAM NO": "", "Name": "", "Group": "", "SUB 1": "", "SUB 2": "", "SUB 3": "", "SUB 4": "", "SUB 5": "", "SUB 6": ""}
         ]
 
         # 4. Rooms sheet
         rooms_data = [
-            {"Room Name": "Auditorium Hall A", "Building": "Main Academic Block", "Floor": "Ground Floor", "Capacity": 50, "Rows": 5, "Columns": 10, "Bench Type": "paired", "Active": "Yes"},
-            {"Room Name": "Auditorium Hall B", "Building": "Main Academic Block", "Floor": "Ground Floor", "Capacity": 50, "Rows": 5, "Columns": 10, "Bench Type": "paired", "Active": "Yes"},
-            {"Room Name": "Room 101", "Building": "Science Block", "Floor": "1st Floor", "Capacity": 30, "Rows": 5, "Columns": 6, "Bench Type": "single", "Active": "Yes"},
-            {"Room Name": "Room 102", "Building": "Science Block", "Floor": "1st Floor", "Capacity": 30, "Rows": 5, "Columns": 6, "Bench Type": "single", "Active": "Yes"},
-            {"Room Name": "Room 103", "Building": "Science Block", "Floor": "1st Floor", "Capacity": 30, "Rows": 5, "Columns": 6, "Bench Type": "single", "Active": "Yes"},
-            {"Room Name": "Room 104", "Building": "Commerce Block", "Floor": "1st Floor", "Capacity": 30, "Rows": 5, "Columns": 6, "Bench Type": "single", "Active": "Yes"},
-            {"Room Name": "Room 201", "Building": "Senior Wing", "Floor": "2nd Floor", "Capacity": 36, "Rows": 6, "Columns": 6, "Bench Type": "paired", "Active": "Yes"},
-            {"Room Name": "Room 202", "Building": "Senior Wing", "Floor": "2nd Floor", "Capacity": 36, "Rows": 6, "Columns": 6, "Bench Type": "paired", "Active": "Yes"},
+            {"Room Name": "", "Building": "", "Floor": "", "Capacity": "", "Rows": "", "Columns": "", "Bench Type": "", "Active": ""}
         ]
 
-        # 5. Sessions with 50/50 anti-cheat interleave pairs (e.g. Science taking Physics while Commerce takes Business Studies!)
-        today_str = datetime.date.today().isoformat()
+        # 5. Sessions
         sessions_data = [
-            {"Session Name": "Final Exam - Physics & Business Studies", "Date": today_str, "Time Slot": "09:00 AM - 12:00 PM", "Subjects": "PHY, BS"},
-            {"Session Name": "Final Exam - Chemistry & Accountancy", "Date": today_str, "Time Slot": "01:30 PM - 04:30 PM", "Subjects": "CHE, ACC"},
-            {"Session Name": "Final Exam - Mathematics & Economics", "Date": today_str, "Time Slot": "09:00 AM - 12:00 PM", "Subjects": "MATH, ECO"},
-            {"Session Name": "Final Exam - English Core", "Date": today_str, "Time Slot": "09:00 AM - 12:00 PM", "Subjects": "ENG"},
-            {"Session Name": "Final Exam - Biology & Computer Science", "Date": today_str, "Time Slot": "01:30 PM - 04:30 PM", "Subjects": "BIO, CS"},
+            {"Session Name": "", "Date": "", "Time Slot": "", "Subjects": ""}
         ]
 
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
