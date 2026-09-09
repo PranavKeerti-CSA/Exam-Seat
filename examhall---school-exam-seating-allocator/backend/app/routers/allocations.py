@@ -232,15 +232,38 @@ def export_seating_plan_excel(session_id: str, db: Session = Depends(get_db)):
             df.to_excel(writer, sheet_name=safe_room_name, startrow=2, index=False)
             worksheet = writer.sheets[safe_room_name]
             
+            # Set column widths
+            worksheet.column_dimensions['A'].width = 15
+            worksheet.column_dimensions['B'].width = 30
+            worksheet.column_dimensions['C'].width = 12
+            worksheet.column_dimensions['D'].width = 25
+            
             worksheet.cell(row=1, column=1, value=f"Exam Date: {session.date}")
             worksheet.cell(row=1, column=1).font = Font(bold=True, size=14)
             
+            # Bold the headers
+            for col_idx in range(1, 5):
+                cell = worksheet.cell(row=3, column=col_idx)
+                cell.font = Font(bold=True)
+            
+            def get_pastel_color(hex_str, factor=0.75):
+                h = hex_str.lstrip('#')
+                if len(h) != 6: return "FFFFFF"
+                try:
+                    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                    r = int(r + (255 - r) * factor)
+                    g = int(g + (255 - g) * factor)
+                    b = int(b + (255 - b) * factor)
+                    return f"{r:02X}{g:02X}{b:02X}"
+                except:
+                    return "FFFFFF"
+
             for r_idx, row in enumerate(worksheet.iter_rows(min_row=4, max_row=3 + len(df), min_col=1, max_col=4), start=0):
-                hex_color = colors[r_idx].lstrip('#') if r_idx < len(colors) else "FFFFFF"
-                if len(hex_color) == 6:
-                    fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
-                    for cell in row:
-                        cell.fill = fill
+                raw_color = colors[r_idx] if r_idx < len(colors) else "FFFFFF"
+                pastel_hex = get_pastel_color(raw_color)
+                fill = PatternFill(start_color=pastel_hex, end_color=pastel_hex, fill_type="solid")
+                for cell in row:
+                    cell.fill = fill
 
     clean_name = session.name.replace(" ", "_")
     return FileResponse(
