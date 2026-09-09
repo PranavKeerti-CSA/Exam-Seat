@@ -63,18 +63,22 @@ export function runSeatingAllocation(
         color: '#2563EB'
       };
     } else {
-      // Match by subject ID or subject code based on session priority order
-      const priorityCodes = (session.subjectIds || []).map(id => {
-        const s = subjectById.get(id.toLowerCase());
-        return s ? s.code.toUpperCase() : id.toUpperCase();
-      });
-
-      for (const pCode of priorityCodes) {
-        const matched = studentSubs.find(s => s.code.toUpperCase() === pCode || s.id.toUpperCase() === pCode);
-        if (matched) {
-          chosenSub = matched;
-          break;
-        }
+      const subjectPriority: Record<string, number> = {
+        "ENG": 1, "PHY": 1, "CHE": 1, "ACC": 1, "ECO": 1, "MATH": 1, "A.M": 1, "BIO": 1, "BS": 1,
+        "CS": 2, "ENTRE": 2, "PSY": 2
+      };
+      
+      const sessionMatchedSubs = studentSubs.filter(s => 
+        sessionSubIds.has(s.id.toLowerCase()) || sessionSubCodes.has(s.code.toUpperCase())
+      );
+      
+      if (sessionMatchedSubs.length > 0) {
+        sessionMatchedSubs.sort((a, b) => {
+          const pA = subjectPriority[a.code.toUpperCase()] || 99;
+          const pB = subjectPriority[b.code.toUpperCase()] || 99;
+          return pA - pB;
+        });
+        chosenSub = sessionMatchedSubs[0];
       }
     }
 

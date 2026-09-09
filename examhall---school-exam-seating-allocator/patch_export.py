@@ -1,50 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from typing import Optional
-import tempfile
-import datetime
-import pandas as pd
+import re
 
-from app.database import get_db
-from app import models, schemas
-from app.allocation_service import AllocationEngine
+with open('backend/app/routers/allocations.py', 'r') as f:
+    content = f.read()
 
-router = APIRouter(prefix="/api/allocations", tags=["allocations"])
+start_marker = "    allocations = db.query(models.SeatAllocation).filter("
+end_marker = "        media_type=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\"\n    )"
 
-@router.post("/generate", response_model=schemas.SeatingPlan)
-@router.post("/{session_id}/generate", response_model=schemas.SeatingPlan)
-def generate_seating_plan(
-    session_id: Optional[str] = None,
-    options: Optional[schemas.AllocationOptions] = None,
-    db: Session = Depends(get_db)
-):
-    """Generates an anti-cheating 50/50 seating allocation for the specified session and saves to DB."""
-    if not session_id:
-        # Fallback to first session if none specified
-        first_sess = db.query(models.ExamSession).first()
-        if not first_sess:
-            raise HTTPException(status_code=404, detail="No exam session found.")
-        session_id = first_sess.id
+start_idx = content.find(start_marker)
+end_idx = content.find(end_marker) + len(end_marker)
 
-    if options is None:
-        options = schemas.AllocationOptions()
+if start_idx == -1 or end_idx == -1:
+    print("Markers not found")
+    exit(1)
 
-    try:
-        plan = AllocationEngine.generate_seating_plan(session_id, options, db)
-        return plan
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Allocation generation failed: {str(e)}")
-
-@router.get("/{session_id}", response_model=schemas.SeatingPlan)
-def get_seating_plan(
-    session_id: str,
-    db: Session = Depends(get_db)
-):
-    """Fetch current seating plan from DB or auto-generate if none exists."""
-    allocations = db.query(models.SeatAllocation).filter(
+new_logic = """    allocations = db.query(models.SeatAllocation).filter(
         models.SeatAllocation.session_id == session_id,
         models.SeatAllocation.student_id != None
     ).all()
@@ -105,4 +74,9 @@ def get_seating_plan(
         path=temp_file.name,
         filename=f"{clean_name}_Classwise_Lists.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    )"""
+
+new_content = content[:start_idx] + new_logic + content[end_idx:]
+with open('backend/app/routers/allocations.py', 'w') as f:
+    f.write(new_content)
+print("Export patched")

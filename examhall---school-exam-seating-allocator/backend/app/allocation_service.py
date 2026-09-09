@@ -27,6 +27,23 @@ class AllocationEngine:
         all_subjects_map = {s.id: s for s in db.query(models.Subject).all()}
 
         # 1. Identify all eligible candidates taking subjects in this session
+        
+        # Priority mapping: lower number means higher priority. Primary subjects first.
+        subject_priority = {
+            "ENG": 1,
+            "PHY": 1,
+            "CHE": 1,
+            "ACC": 1,
+            "ECO": 1,
+            "MATH": 1,
+            "A.M": 1,
+            "BIO": 1,
+            "BS": 1,
+            "CS": 2,
+            "ENTRE": 2,
+            "PSY": 2
+        }
+
         candidates: List[Dict[str, Any]] = []
         for stud in all_students:
             matched_subs = []
@@ -39,6 +56,7 @@ class AllocationEngine:
                 matched_subs = list(stud.enrolled_subjects)
 
             if matched_subs:
+                matched_subs.sort(key=lambda s: subject_priority.get(s.code.upper(), 99))
                 candidates.append({
                     "student": stud,
                     "subject": matched_subs[0]

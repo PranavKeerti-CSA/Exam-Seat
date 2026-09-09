@@ -1,4 +1,5 @@
-import React from 'react';
+with open('src/components/AllocationSummaryStats.tsx', 'w') as f:
+    f.write("""import React from 'react';
 import { SeatingPlan } from '../types';
 
 interface AllocationSummaryStatsProps {
@@ -11,3 +12,6 @@ interface AllocationSummaryStatsProps {
 export const AllocationSummaryStats: React.FC<AllocationSummaryStatsProps> = () => {
   return null;
 };
+""")
+
+print("Stats banner replaced")
