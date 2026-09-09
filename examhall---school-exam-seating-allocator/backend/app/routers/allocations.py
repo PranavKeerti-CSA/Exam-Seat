@@ -44,6 +44,155 @@ def get_seating_plan(
     db: Session = Depends(get_db)
 ):
     """Fetch current seating plan from DB or auto-generate if none exists."""
+    allocations = db.query(models.SeatAllocation).filter(models.SeatAllocation.session_id == session_id).all()
+    if not allocations:
+        # Generate default plan
+        return AllocationEngine.generate_seating_plan(session_id, schemas.AllocationOptions(), db)
+
+    # Reconstruct plan from DB allocations
+    session = db.query(models.ExamSession).filter(models.ExamSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rooms = db.query(models.ExamRoom).filter(models.ExamRoom.is_active == True).all()
+    room_allocs = []
+
+    for room in rooms:
+        room_seats = [a for a in allocations if a.room_id == room.id]
+        if not room_seats:
+            continue
+
+        assigned_seats = []
+        grade_dist = {}
+        sub_dist = {}
+        total_assigned = 0
+
+        for s in sorted(room_seats, key=lambda x: x.seat_index):
+            stud = s.student
+            sub = s.subject
+
+            if stud:
+                total_assigned += 1
+                grade_dist[stud.grade] = grade_dist.get(stud.grade, 0) + 1
+            if sub:
+                sub_dist[sub.code] = sub_dist.get(sub.code, 0) + 1
+
+            assigned_seats.append(schemas.SeatAssignment(
+                seatIndex=s.seat_index,
+                row=s.row,
+                col=s.col,
+                seatLabel=s.seat_label,
+                studentId=stud.id if stud else None,
+                studentRollNo=stud.roll_no if stud else None,
+                studentName=stud.name if stud else None,
+                studentGrade=stud.grade if stud else None,
+                subjectCode=sub.code if sub else None,
+                subjectName=sub.name if sub else None,
+                subjectColor=sub.color if sub else None,
+                isSpecialNeeds=s.is_special_needs,
+                hasNeighborConflict=s.neighbor_conflict
+            ))
+
+        room_allocs.append(schemas.RoomAllocation(
+            roomId=room.id,
+            roomName=room.name,
+            building=room.building or "",
+            floor=room.floor or "",
+            capacity=room.capacity,
+            rows=room.rows,
+            cols=room.cols,
+            benchType=room.bench_type,
+            assignedSeats=assigned_seats,
+            totalAssigned=total_assigned,
+            gradeDistribution=grade_dist,
+            subjectDistribution=sub_dist,
+            invigilator="Assigned"
+        ))
+
+    total_assigned = sum(r.totalAssigned for r in room_allocs)
+    total_cap = sum(r.capacity for r in rooms)
+
+    stats = schemas.SeatingPlanStats(
+        totalStudents=total_assigned,
+        totalAssigned=total_assigned,
+        totalRoomsUsed=len(room_allocs),
+        totalCapacityAvailable=total_cap,
+        overallUtilizationPercent=round(100.0 * total_assigned / max(1, total_cap), 1),
+        mixedRoomCount=sum(1 for r in room_allocs if len(r.subjectDistribution) > 1),
+        singleGroupRoomCount=sum(1 for r in room_allocs if len(r.subjectDistribution) == 1),
+        conflictCount=sum(1 for a in allocations if a.neighbor_conflict),
+        cheatPreventionIndex=95.0
+    )
+
+    return schemas.SeatingPlan(
+        id=f"plan-{session_id}",
+        sessionId=session.id,
+        sessionName=session.name,
+        sessionDate=session.date,
+        sessionTime=session.time_slot,
+        createdAt=datetime.datetime.utcnow().isoformat(),
+        options=schemas.AllocationOptions(),
+        roomAllocations=room_allocs,
+        unassignedStudents=[],
+        conflicts=[],
+        stats=stats
+    )
+
+@router.post("/swap")
+def swap_seats(swap_req: schemas.SeatSwapRequest, db: Session = Depends(get_db)):
+    """Swaps student seat assignments between two seats and updates monitoring records."""
+    seat_a = db.query(models.SeatAllocation).filter(
+        models.SeatAllocation.session_id == swap_req.sessionId,
+        models.SeatAllocation.room_id == swap_req.sourceRoomId,
+        models.SeatAllocation.seat_index == swap_req.sourceSeatIdx
+    ).first()
+
+    seat_b = db.query(models.SeatAllocation).filter(
+        models.SeatAllocation.session_id == swap_req.sessionId,
+        models.SeatAllocation.room_id == swap_req.targetRoomId,
+        models.SeatAllocation.seat_index == swap_req.targetSeatIdx
+    ).first()
+
+    if not seat_a or not seat_b:
+        raise HTTPException(status_code=404, detail="One or both seats could not be found.")
+
+    # Swap student and subject fields
+    temp_stud = seat_a.student_id
+    temp_sub = seat_a.subject_id
+    temp_special = seat_a.is_special_needs
+
+    seat_a.student_id = seat_b.student_id
+    seat_a.subject_id = seat_b.subject_id
+    seat_a.is_special_needs = seat_b.is_special_needs
+
+    seat_b.student_id = temp_stud
+    seat_b.subject_id = temp_sub
+    seat_b.is_special_needs = temp_special
+
+    # Update monitoring records for students if moved
+    for st_id, room_id, label in [
+        (seat_a.student_id, seat_a.room_id, seat_a.seat_label),
+        (seat_b.student_id, seat_b.room_id, seat_b.seat_label)
+    ]:
+        if st_id:
+            mon = db.query(models.StudentMonitoring).filter(
+                models.StudentMonitoring.student_id == st_id,
+                models.StudentMonitoring.session_id == swap_req.sessionId
+            ).first()
+            if mon:
+                mon.room_id = room_id
+                mon.seat_label = label
+
+    db.commit()
+    return {"status": "success", "message": "Seats swapped successfully."}
+
+@router.get("/{session_id}/export/excel")
+def export_seating_plan_excel(session_id: str, db: Session = Depends(get_db)):
+    """Exports seating plan directly to an Excel file (.xlsx) with Room, Seat, and Student details."""
+    session = db.query(models.ExamSession).filter(models.ExamSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     allocations = db.query(models.SeatAllocation).filter(
         models.SeatAllocation.session_id == session_id,
         models.SeatAllocation.student_id != None
@@ -63,8 +212,6 @@ def get_seating_plan(
     with pd.ExcelWriter(temp_file.name, engine="openpyxl") as writer:
         for room_name, allocs in room_allocs.items():
             records = []
-            # Sort by physical seat just in case, or by whatever order. The user said "name list".
-            # Usually roll number order is preferred for a name list.
             allocs.sort(key=lambda x: x.student.roll_no if x.student else "")
             
             for a in allocs:
@@ -81,21 +228,16 @@ def get_seating_plan(
             df = pd.DataFrame(records)
             colors = df.pop("_color").tolist() if "_color" in df.columns else []
             
-            # Write to excel
             safe_room_name = str(room_name).replace("/", "_")[:31]
             df.to_excel(writer, sheet_name=safe_room_name, startrow=2, index=False)
             worksheet = writer.sheets[safe_room_name]
             
-            # Add Date at top
             worksheet.cell(row=1, column=1, value=f"Exam Date: {session.date}")
             worksheet.cell(row=1, column=1).font = Font(bold=True, size=14)
             
-            # Apply color coding to rows
             for r_idx, row in enumerate(worksheet.iter_rows(min_row=4, max_row=3 + len(df), min_col=1, max_col=4), start=0):
                 hex_color = colors[r_idx].lstrip('#') if r_idx < len(colors) else "FFFFFF"
                 if len(hex_color) == 6:
-                    # lighten color slightly if it's too dark so text is readable
-                    # actually, just use the raw color.
                     fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
                     for cell in row:
                         cell.fill = fill
