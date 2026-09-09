@@ -63,14 +63,16 @@ export function runSeatingAllocation(
         color: '#2563EB'
       };
     } else {
-      // Match by subject ID or subject code
-      for (const sub of studentSubs) {
-        if (
-          sessionSubIds.has(sub.id.toLowerCase()) ||
-          sessionSubIds.has(sub.code.toLowerCase()) ||
-          sessionSubCodes.has(sub.code.toUpperCase())
-        ) {
-          chosenSub = sub;
+      // Match by subject ID or subject code based on session priority order
+      const priorityCodes = (session.subjectIds || []).map(id => {
+        const s = subjectById.get(id.toLowerCase());
+        return s ? s.code.toUpperCase() : id.toUpperCase();
+      });
+
+      for (const pCode of priorityCodes) {
+        const matched = studentSubs.find(s => s.code.toUpperCase() === pCode || s.id.toUpperCase() === pCode);
+        if (matched) {
+          chosenSub = matched;
           break;
         }
       }
@@ -125,7 +127,7 @@ export function runSeatingAllocation(
     });
   }
 
-  // Convert map to array of pools for round-robin / 50-50 splitting
+  // Create pools sorted by size descending
   const pools = Array.from(groupMap.entries()).map(([key, list]) => ({
     key,
     list: [...list],
@@ -133,204 +135,152 @@ export function runSeatingAllocation(
     grade: list[0]?.student.grade,
     originalCount: list.length
   }));
-
-  // Sort pools with largest counts first
   pools.sort((a, b) => b.list.length - a.list.length);
 
+  class PoolManager {
+    pools: any[];
+    stream1: any;
+    stream2: any;
+
+    constructor(poolsList: any[]) {
+      this.pools = poolsList;
+      this.stream1 = this._getNextPool(null);
+      this.stream2 = this._getNextPool(this.stream1 ? this.stream1.subject.code : null);
+    }
+
+    _getNextPool(avoidSubject: string | null) {
+      if (this.pools.length === 0) return null;
+      if (avoidSubject) {
+        const idx = this.pools.findIndex(p => p.subject.code !== avoidSubject);
+        if (idx !== -1) {
+          return this.pools.splice(idx, 1)[0];
+        }
+      }
+      return this.pools.shift();
+    }
+
+    getStudent(streamIdx: number) {
+      let pool = streamIdx === 1 ? this.stream1 : this.stream2;
+      const otherPool = streamIdx === 1 ? this.stream2 : this.stream1;
+
+      if (pool && pool.list.length > 0) {
+        return pool.list.shift();
+      }
+
+      const avoidSub = otherPool ? otherPool.subject.code : null;
+      const newPool = this._getNextPool(avoidSub);
+
+      if (newPool) {
+        if (streamIdx === 1) {
+          this.stream1 = newPool;
+          pool = this.stream1;
+        } else {
+          this.stream2 = newPool;
+          pool = this.stream2;
+        }
+        return pool.list.shift();
+      }
+
+      if (otherPool && otherPool.list.length > 0) {
+        return otherPool.list.shift();
+      }
+
+      return null;
+    }
+
+    hasStudents() {
+      if (this.stream1 && this.stream1.list.length > 0) return true;
+      if (this.stream2 && this.stream2.list.length > 0) return true;
+      return this.pools.length > 0;
+    }
+  }
+
+  const pm = new PoolManager(pools);
   const roomAllocations: RoomAllocation[] = [];
   const unassignedStudents: { student: Student; subject: ExamSubject; reason: string }[] = [];
   const conflicts: ConflictWarning[] = [];
 
   // 3. Allocate Room by Room
   for (const room of activeRooms) {
-    // If all students are already seated, break early or initialize empty room
-    const totalRemainingStudents = pools.reduce((acc, p) => acc + p.list.length, 0);
-    if (totalRemainingStudents === 0) {
-      break;
-    }
+    if (!pm.hasStudents()) break;
 
-    const rows = room.rows || Math.ceil(room.capacity / (room.cols || 6));
-    const cols = room.cols || Math.ceil(room.capacity / rows);
+    const rows = room.rows || Math.max(1, Math.ceil(room.capacity / (room.cols || 6)));
+    const cols = room.cols || Math.max(1, Math.ceil(room.capacity / rows));
     const capacity = room.capacity;
 
-    // Create empty seat grid
     const assignedSeats: SeatAssignment[] = [];
+    const grid: any[][] = Array(rows).fill(null).map(() => Array(cols).fill(null));
+    
+    // Step 1: Assign students physically column by column
+    let seatsFilled = 0;
+    for (let c = 0; c < cols; c++) {
+      const streamIdx = c % 2 === 0 ? 1 : 2;
+      for (let r = 0; r < rows; r++) {
+        if (seatsFilled >= capacity) break;
+
+        const item = pm.getStudent(streamIdx);
+        if (item) {
+          grid[r][c] = item;
+          seatsFilled++;
+        }
+      }
+    }
+
+    // Step 2: Read out in row-major order so the DOM Grid renders it perfectly aligned
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const seatIdx = r * cols + c;
-        if (seatIdx < capacity) {
-          const rowLetter = String.fromCharCode(65 + r); // A, B, C, D...
-          const colNum = c + 1; // 1, 2, 3...
+        if (seatIdx >= capacity) break; // Out of bounds for this room
+
+        const seatLabel = `${String.fromCharCode(65 + r)}${c + 1}`;
+        const item = grid[r][c];
+
+        if (item) {
+          let hasNeighborConflict = false;
+          const neighbors = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]];
+          for (const [nr, nc] of neighbors) {
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+              const nItem = grid[nr][nc];
+              if (nItem && nItem.subject.code === item.subject.code) {
+                hasNeighborConflict = true;
+                break;
+              }
+            }
+          }
+
+          if (hasNeighborConflict) {
+            conflicts.push({
+              type: 'neighbor_same_subject',
+              severity: 'warning',
+              message: `Student ${item.student.rollNo} sitting adjacent to another student with same subject`,
+              roomId: room.id,
+              studentId: item.student.id,
+              seatLabel
+            });
+          }
+
           assignedSeats.push({
             seatIndex: seatIdx,
             row: r,
             col: c,
-            seatLabel: `${rowLetter}${colNum}`
+            seatLabel,
+            studentId: item.student.id,
+            studentRollNo: item.student.rollNo,
+            studentName: item.student.name,
+            studentGrade: item.student.grade,
+            subjectCode: item.subject.code,
+            subjectName: item.subject.name,
+            subjectColor: item.subject.color,
+            isSpecialNeeds: item.student.specialNeeds,
+            hasNeighborConflict
           });
-        }
-      }
-    }
-
-    // Determine how many students from each group to place in this room
-    // User request: "if a class can accommodate 30 people... it should split like 15 students from that class and 15 from another class... if incase there is a difference... it can put 2 or 3 students of a single subject"
-    const activePools = pools.filter(p => p.list.length > 0);
-
-    if (activePools.length === 0) break;
-
-    let roomCandidates: (StudentToSeat | null)[] = [];
-
-    if (activePools.length === 1) {
-      // Only 1 group remaining, fill as many as room allows
-      const p = activePools[0];
-      const takeCount = Math.min(capacity, p.list.length);
-      const taken = p.list.splice(0, takeCount);
-      roomCandidates = taken;
-    } else {
-      // 2 or more groups available - perform smart 50/50 or proportional multi-group split
-      const poolA = activePools[0];
-      const poolB = activePools[1];
-
-      // Target half of room capacity for Pool A and half for Pool B
-      const halfCapacity = Math.floor(capacity / 2);
-      const takeA = Math.min(halfCapacity, poolA.list.length);
-      const takeB = Math.min(capacity - takeA, poolB.list.length);
-
-      const takenA = poolA.list.splice(0, takeA);
-      const takenB = poolB.list.splice(0, takeB);
-
-      // Check if there is remaining capacity in this room for leftover students from other pools
-      let currentRoomCount = takenA.length + takenB.length;
-      const additionalLeftovers: StudentToSeat[] = [];
-
-      if (currentRoomCount < capacity) {
-        // Find remaining pools or take leftovers from other pools (2-3 students)
-        for (const p of pools) {
-          if (p.list.length > 0 && currentRoomCount + additionalLeftovers.length < capacity) {
-            const availableSpace = capacity - (currentRoomCount + additionalLeftovers.length);
-            const takeLeftover = Math.min(availableSpace, p.list.length);
-            const takenLeftovers = p.list.splice(0, takeLeftover);
-            additionalLeftovers.push(...takenLeftovers);
-          }
-        }
-      }
-
-      // Merge and interleave candidates according to strategy
-      if (options.strategy === 'checkerboard_mix' || options.strategy === 'split_50_50') {
-        // Interleave takenA and takenB in alternating order (A, B, A, B...)
-        const interleaved: StudentToSeat[] = [];
-        const maxLen = Math.max(takenA.length, takenB.length);
-        for (let i = 0; i < maxLen; i++) {
-          if (i < takenA.length) interleaved.push(takenA[i]);
-          if (i < takenB.length) interleaved.push(takenB[i]);
-        }
-        // Append any extra leftover students
-        interleaved.push(...additionalLeftovers);
-        roomCandidates = interleaved;
-      } else if (options.strategy === 'column_alternate') {
-        const interleaved: StudentToSeat[] = [];
-        let aIdx = 0;
-        let bIdx = 0;
-        let lIdx = 0;
-        for (let c = 0; c < cols; c++) {
-          for (let r = 0; r < rows; r++) {
-            if (c % 2 === 0) {
-              if (aIdx < takenA.length) interleaved.push(takenA[aIdx++]);
-              else if (bIdx < takenB.length) interleaved.push(takenB[bIdx++]);
-              else if (lIdx < additionalLeftovers.length) interleaved.push(additionalLeftovers[lIdx++]);
-            } else {
-              if (bIdx < takenB.length) interleaved.push(takenB[bIdx++]);
-              else if (aIdx < takenA.length) interleaved.push(takenA[aIdx++]);
-              else if (lIdx < additionalLeftovers.length) interleaved.push(additionalLeftovers[lIdx++]);
-            }
-          }
-        }
-        roomCandidates = interleaved;
-      } else {
-        // Multi-subject round robin
-        const allGroups = [takenA, takenB, additionalLeftovers].filter(g => g.length > 0);
-        const interleaved: StudentToSeat[] = [];
-        let added = true;
-        let index = 0;
-        while (added) {
-          added = false;
-          for (const g of allGroups) {
-            if (index < g.length) {
-              interleaved.push(g[index]);
-              added = true;
-            }
-          }
-          index++;
-        }
-        roomCandidates = interleaved;
-      }
-    }
-
-    // Assign candidates to seat slots
-    // Handle special needs students first (place in row 0)
-    const specialNeedsCandidates: StudentToSeat[] = [];
-    const regularCandidates: StudentToSeat[] = [];
-
-    for (const c of roomCandidates) {
-      if (c && c.student.specialNeeds && options.prioritizeSpecialNeedsFront) {
-        specialNeedsCandidates.push(c);
-      } else if (c) {
-        regularCandidates.push(c);
-      }
-    }
-
-    // Place special needs in front row
-    let frontSeatIdx = 0;
-    for (const sn of specialNeedsCandidates) {
-      while (frontSeatIdx < assignedSeats.length && assignedSeats[frontSeatIdx].studentId) {
-        frontSeatIdx++;
-      }
-      if (frontSeatIdx < assignedSeats.length) {
-        const seat = assignedSeats[frontSeatIdx];
-        seat.studentId = sn.student.id;
-        seat.studentRollNo = sn.student.rollNo;
-        seat.studentName = sn.student.name;
-        seat.studentGrade = sn.student.grade;
-        seat.subjectCode = sn.subject.code;
-        seat.subjectName = sn.subject.name;
-        seat.subjectColor = sn.subject.color;
-        seat.isSpecialNeeds = true;
-      }
-    }
-
-    // Now assign regular candidates based on pattern
-    if (options.strategy === 'column_alternate') {
-      // Column by column assignment (Col 0: Group A, Col 1: Group B, Col 2: Group A...)
-      let candIdx = 0;
-      for (let c = 0; c < cols; c++) {
-        for (let r = 0; r < rows; r++) {
-          const seat = assignedSeats.find(s => s.row === r && s.col === c);
-          if (seat && !seat.studentId && candIdx < regularCandidates.length) {
-            const cand = regularCandidates[candIdx++];
-            seat.studentId = cand.student.id;
-            seat.studentRollNo = cand.student.rollNo;
-            seat.studentName = cand.student.name;
-            seat.studentGrade = cand.student.grade;
-            seat.subjectCode = cand.subject.code;
-            seat.subjectName = cand.subject.name;
-            seat.subjectColor = cand.subject.color;
-            seat.isSpecialNeeds = cand.student.specialNeeds;
-          }
-        }
-      }
-    } else {
-      // Checkerboard or sequential alternate
-      let candIdx = 0;
-      for (const seat of assignedSeats) {
-        if (!seat.studentId && candIdx < regularCandidates.length) {
-          const cand = regularCandidates[candIdx++];
-          seat.studentId = cand.student.id;
-          seat.studentRollNo = cand.student.rollNo;
-          seat.studentName = cand.student.name;
-          seat.studentGrade = cand.student.grade;
-          seat.subjectCode = cand.subject.code;
-          seat.subjectName = cand.subject.name;
-          seat.subjectColor = cand.subject.color;
-          seat.isSpecialNeeds = cand.student.specialNeeds;
+        } else {
+          assignedSeats.push({
+            seatIndex: seatIdx,
+            row: r,
+            col: c,
+            seatLabel
+          });
         }
       }
     }

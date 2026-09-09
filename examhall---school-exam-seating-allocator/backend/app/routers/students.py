@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/students", tags=["students"])
 def list_students(
     search: Optional[str] = Query(None, description="Search by roll number, name, or grade"),
     grade: Optional[str] = Query(None, description="Filter by grade"),
-    limit: int = Query(200, le=1000),
+    limit: int = Query(1000, le=10000),
     db: Session = Depends(get_db)
 ):
     query = db.query(models.Student)

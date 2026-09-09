@@ -1,77 +1,19 @@
-import datetime
-import math
-from typing import List, Dict, Any, Optional, Tuple
-from sqlalchemy.orm import Session
+import re
 
-from app import models, schemas
+with open('app/allocation_service.py', 'r') as f:
+    content = f.read()
 
-class AllocationEngine:
-    @staticmethod
-    def generate_seating_plan(
-        session_id: str,
-        options: schemas.AllocationOptions,
-        db: Session
-    ) -> schemas.SeatingPlan:
-        exam_session = db.query(models.ExamSession).filter(models.ExamSession.id == session_id).first()
-        if not exam_session:
-            raise ValueError(f"Exam session {session_id} not found")
+start_marker = "        # Create pools sorted by size descending"
+end_marker = "            room_alloc = schemas.RoomAllocation("
 
-        active_rooms = db.query(models.ExamRoom).filter(
-            models.ExamRoom.is_active == True,
-            models.ExamRoom.capacity > 0
-        ).all()
+start_idx = content.find(start_marker)
+end_idx = content.find(end_marker)
 
-        session_subject_ids = {s.id.lower() for s in exam_session.subjects}
-        session_subject_codes = {s.code.upper() for s in exam_session.subjects}
-        all_students = db.query(models.Student).all()
-        all_subjects_map = {s.id: s for s in db.query(models.Subject).all()}
+if start_idx == -1 or end_idx == -1:
+    print("Markers not found")
+    exit(1)
 
-        # 1. Identify all eligible candidates taking subjects in this session
-        candidates: List[Dict[str, Any]] = []
-        for stud in all_students:
-            matched_subs = []
-            if session_subject_ids:
-                matched_subs = [
-                    s for s in stud.enrolled_subjects 
-                    if s.id.lower() in session_subject_ids or s.code.upper() in session_subject_codes
-                ]
-            else:
-                matched_subs = list(stud.enrolled_subjects)
-
-            if matched_subs:
-                candidates.append({
-                    "student": stud,
-                    "subject": matched_subs[0]
-                })
-
-        # Resilient fallback: if no candidate matched the session filter, seat all students
-        if not candidates and all_students:
-            for stud in all_students:
-                chosen = stud.enrolled_subjects[0] if stud.enrolled_subjects else (list(all_subjects_map.values())[0] if all_subjects_map else None)
-                if chosen:
-                    candidates.append({
-                        "student": stud,
-                        "subject": chosen
-                    })
-
-        # 2. Group candidates by Subject Code & Grade
-        group_map: Dict[str, List[Dict[str, Any]]] = {}
-        for c in candidates:
-            key = f"{c['subject'].code}_{c['student'].grade}"
-            if key not in group_map:
-                group_map[key] = []
-            group_map[key].append(c)
-
-        # Sort within each group (special needs first if prioritized, then roll number)
-        for key, members in group_map.items():
-            members.sort(
-                key=lambda x: (
-                    0 if (options.prioritizeSpecialNeedsFront and x["student"].special_needs) else 1,
-                    x["student"].roll_no
-                )
-            )
-
-        # Create pools sorted by size descending
+new_logic = """        # Create pools sorted by size descending
         pools = []
         for key, members in group_map.items():
             pools.append({
@@ -263,87 +205,11 @@ class AllocationEngine:
                             seatLabel=seat_label
                         ))
 
-            room_alloc = schemas.RoomAllocation(
-                roomId=room.id,
-                roomName=room.name,
-                building=room.building or "",
-                floor=room.floor or "",
-                capacity=room.capacity,
-                rows=rows,
-                cols=cols,
-                benchType=room.bench_type,
-                assignedSeats=assigned_seats,
-                totalAssigned=total_assigned_room,
-                gradeDistribution=grade_dist,
-                subjectDistribution=subject_dist,
-                invigilator="Allocated"
-            )
-            room_allocations.append(room_alloc)
+"""
 
-        # Record any unassigned students
-        for p in pools:
-            for item in p["list"]:
-                unassigned_students.append(schemas.UnassignedStudent(
-                    student=schemas.Student(
-                        id=item["student"].id,
-                        rollNo=item["student"].roll_no,
-                        name=item["student"].name,
-                        grade=item["student"].grade,
-                        gender=item["student"].gender,
-                        specialNeeds=item["student"].special_needs,
-                        enrolledSubjectIds=[s.id for s in item["student"].enrolled_subjects]
-                    ),
-                    subject=schemas.ExamSubject(
-                        id=item["subject"].id,
-                        code=item["subject"].code,
-                        name=item["subject"].name,
-                        gradeLevel=item["subject"].grade_level,
-                        color=item["subject"].color
-                    ),
-                    reason="Exam hall capacity exhausted"
-                ))
+new_content = content[:start_idx] + new_logic + content[end_idx:]
 
-        # Compute global stats
-        total_candidates = len(candidates)
-        total_assigned = sum(r.totalAssigned for r in room_allocations)
-        total_cap_avail = sum(r.capacity for r in active_rooms)
-        rooms_used = sum(1 for r in room_allocations if r.totalAssigned > 0)
-        mixed_rooms = sum(1 for r in room_allocations if len(r.subjectDistribution) > 1)
-        single_rooms = sum(1 for r in room_allocations if len(r.subjectDistribution) == 1)
+with open('app/allocation_service.py', 'w') as f:
+    f.write(new_content)
 
-        conflict_count = len([c for c in conflicts if c.severity in ["warning", "error"]])
-        cheat_prev_index = 100.0
-        if total_assigned > 0:
-            seated_conflicts = sum(
-                1 for r in room_allocations for s in r.assignedSeats if s.studentId and s.hasNeighborConflict
-            )
-            cheat_prev_index = max(0.0, round(100.0 * (1 - (seated_conflicts / total_assigned)), 1))
-
-        stats = schemas.SeatingPlanStats(
-            totalStudents=total_candidates,
-            totalAssigned=total_assigned,
-            totalRoomsUsed=rooms_used,
-            totalCapacityAvailable=total_cap_avail,
-            overallUtilizationPercent=round(100.0 * total_assigned / max(1, total_cap_avail), 1),
-            mixedRoomCount=mixed_rooms,
-            singleGroupRoomCount=single_rooms,
-            conflictCount=conflict_count,
-            cheatPreventionIndex=cheat_prev_index
-        )
-
-        db.commit()
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        return schemas.SeatingPlan(
-            id=f"plan-{session_id}-{int(now_utc.timestamp())}",
-            sessionId=exam_session.id,
-            sessionName=exam_session.name,
-            sessionDate=exam_session.date,
-            sessionTime=exam_session.time_slot,
-            createdAt=now_utc.isoformat(),
-            options=options,
-            roomAllocations=room_allocations,
-            unassignedStudents=unassigned_students,
-            conflicts=conflicts,
-            stats=stats
-        )
+print("Backend patched 3")

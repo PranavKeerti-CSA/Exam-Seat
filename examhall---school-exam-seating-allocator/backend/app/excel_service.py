@@ -403,10 +403,10 @@ class ExcelService:
 
         default_sessions_data = [
             ("Term Exam - English Language Core", "09:00 AM - 12:00 PM", ["ENG"]),
-            ("Term Exam - Math & Additional Subjects", "09:00 AM - 12:00 PM", ["MATH", "A.M", "CS", "PSY", "ENTRE"]),
-            ("Term Exam - Biology & Additional Subjects", "01:30 PM - 04:30 PM", ["BIO", "CS", "PSY", "ENTRE"]),
-            ("Term Exam - Physics & Economics", "09:00 AM - 12:00 PM", ["PHY", "ECO"]),
-            ("Term Exam - Chemistry & Business Subjects", "01:30 PM - 04:30 PM", ["CHE", "BS", "BA", "ACC"])
+            ("Term Exam - Chemistry & Economics", "09:00 AM - 12:00 PM", ["CHE", "ECO"]),
+            ("Term Exam - Physics & Accountancy", "09:00 AM - 12:00 PM", ["PHY", "ACC"]),
+            ("Term Exam - Math & Optionals", "09:00 AM - 12:00 PM", ["MATH", "A.M", "CS", "ENTRE", "PSY"]),
+            ("Term Exam - Biology, Business & Optionals", "09:00 AM - 12:00 PM", ["BIO", "BS", "CS", "ENTRE", "PSY"])
         ]
         count = 0
         today_str = datetime.date.today().isoformat()
